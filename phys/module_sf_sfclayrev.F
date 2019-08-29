@@ -234,7 +234,7 @@ CONTAINS
             znt(i,j) = spec_z0
           ENDDO
         ENDDO
-        IF (itimestep .ne. 1) THEN ! set z0
+        IF (itimestep .ne. 1) THEN
           DO J=jts,jte
             DO I=its,ite
               IF (spec_hfx .eq. 0.) THEN
@@ -294,8 +294,8 @@ CONTAINS
                                                                     )
       ENDDO
 
-      IF ( spec_ideal ) THEN
-        DO J=jts,jte ! DME-MMC
+      IF ( spec_ideal ) THEN ! DME-MMC
+        DO J=jts,jte
           DO I=its,ite
             ustt(i,j) = ust(i,j)
             molt(i,j) = mol(i,j)

@@ -10,6 +10,35 @@ MODULE module_bc_em
    USE module_wrf_error
    USE module_model_constants, ONLY: R_d, R_v, T0
 
+! --------- LJMB ---------
+! For intra-processor communications:
+#ifdef DM_PARALLEL
+   USE module_dm
+   USE module_comm_dm, ONLY : &
+                           HALO_EM_MOM_PERT_U_sub   &
+                          ,PERIOD_EM_MOM_PERT_U_sub &
+                          ,HALO_EM_MOM_PERT_V_sub   &
+                          ,PERIOD_EM_MOM_PERT_V_sub &
+                          ,HALO_EM_MOM_PERT_W_sub   &
+                          ,PERIOD_EM_MOM_PERT_W_sub
+#endif
+
+   USE module_domain_type
+
+   ! In WRFV3, the module_domain_type is defined
+   ! in a separaate source file, frame/module_domain_type.F
+   ! This enables splitting off the alloc_space_field routine
+   ! into a separate file, reducing the size of module_domain
+
+   !  Now that a "domain" TYPE exists, we can use it to store a few pointers
+   !  to this type.  These are primarily for use in traversing the linked list.
+   !  The "head_grid" is always the pointer to the first domain that is
+   !  allocated.  This is available and is not to be changed.  The others are
+   !  just temporary pointers.
+
+! ------- END LJMB --------
+
+
 CONTAINS
 
 !------------------------------------------------------------------------
@@ -610,6 +639,905 @@ CONTAINS
 
    END SUBROUTINE spec_bdy_dry_perturb
 
+!------------------------------------------------------------------------
+!----------------------------- START LJMB -------------------------------
+! 6/19/2017: New subroutines:
+! 1) "mk_cells"
+!    Creates an array of the size of the domain (grid%mom_pert_u/v).
+!    The array contains perturbations all over organized as cells.
+! 2) "mom_pert"
+!    Modifies u, v and w tendencies (ru_tend, rv_tend, rw_tend).
+!    Adds random perturbations to cells of a certain size @ inflow bdries.
+!------------------------------------------------------------------------
+
+   SUBROUTINE mk_cells_u (mom_pert_u,mom_pert_ktop,                     &
+                        mom_pert_kbot,cell_width,                       &
+                        mom_pert_amp,config_flags,grid,                 &
+                        its,ite,jts,jte,kts,kte,                        &
+                        ids,ide,jds,jde,kds,kde,                        &
+                        ips,ipe,jps,jpe,kps,kpe,                        &
+                        ims,ime,jms,jme,kms,kme)
+
+      ! __________ DECLARATIONS ___________
+      IMPLICIT NONE
+
+      ! Array dimentions:
+      INTEGER,INTENT(IN)::ids,ide,jds,jde,kds,kde,                      &
+                          its,ite,jts,jte,kts,kte,                      &
+                          ips,ipe,jps,jpe,kps,kpe,                      &
+                          ims,ime,jms,jme,kms,kme
+
+      ! Cell characteristics:
+      REAL,INTENT(IN)::mom_pert_ktop,mom_pert_kbot,mom_pert_amp
+      INTEGER,INTENT(IN)::cell_width
+
+      ! Grid pointer for intra-processor communications:
+      TYPE(domain),INTENT(IN)::grid
+
+      ! Structure that contains run-time configuration (namelist) data for
+      ! domain
+      TYPE(grid_config_rec_type),INTENT(IN)::config_flags
+
+      ! Array of Perturbations:
+      REAL,DIMENSION(ims:ime,kms:kme,jms:jme),INTENT(INOUT)::mom_pert_u
+
+      ! Other variables:
+      INTEGER::i,j,k,icell,jcell,kcell
+      REAL::rand_amp,cell_pt_x,cell_pt_y,cell_pt_z
+
+      ! ________ END DECLARATIONS _________
+
+      CALL random_seed ! Must be called to randomnize the random # generator (-_-)
+
+      ! Fill up array:
+      ! - Begin by finding cell boundaries within tile.
+      ! - After finding the boundaries, fill up the rest of that cell 
+
+      !For each perturbed k:
+      DO k = mom_pert_kbot,mom_pert_ktop
+
+         ! For all x's in the tile:
+         DO i = its,ite-1
+
+            ! If this z falls on the transition between cells: 
+            IF (MOD(k-1,cell_width) .EQ. 0) THEN
+
+               ! For all y's in the tile:
+               DO j = jts,jte-1
+
+                  ! If this y falls on the transition between cells:
+                  IF (MOD(j-1,cell_width) .EQ. 0) THEN
+
+                     ! Define a random number from -1 to 1:
+                     CALL random_number(rand_amp)
+                     rand_amp = ((rand_amp*2)-1)*mom_pert_amp
+
+                     ! For all the gps in this cell (or rest of tile) in z:
+                     DO kcell = k,min(k+cell_width,kte)
+
+                        IF (kcell .LE. mom_pert_ktop) THEN
+
+                           ! For all the gps in this cell (or rest of tile) in y:
+                           DO jcell = j,min(j+cell_width,jte)
+
+                              ! Assign value to this cell in the final array!
+                              mom_pert_u(i,kcell,jcell) = rand_amp
+
+                           ENDDO
+                        ENDIF
+                     ENDDO
+                  ENDIF
+               ENDDO
+            ENDIF
+         ENDDO
+      ENDDO
+
+! Pass information between processors:
+#ifdef DM_PARALLEL
+#      include "HALO_EM_MOM_PERT_U.inc"
+#      include "PERIOD_EM_MOM_PERT_U.inc"
+#endif
+
+      ! Now fill the gaps between tiles!
+
+      ! For all perturbed points in x:
+      DO i = its,ite
+
+         ! If the first point of the tile falls on a y-cell intersection but not z: 
+         IF ((MOD(kts-1,cell_width) .NE. 0) .AND. (MOD(jts-1,cell_width) .EQ. 0)) THEN
+
+            ! its with respect to current cell:
+            cell_pt_z = cell_width - MOD(kts-1,cell_width) -1
+
+            ! For all z-points from the start of the tile to the end of the cell:
+            DO kcell = kts,kts+cell_pt_z
+
+               IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+
+                  ! For all y-points in the tile:
+                  DO jcell = jts,jte
+
+                     ! Assign value to this grid-cell:
+                     mom_pert_u(i,kcell,jcell) = mom_pert_u(i,kts-1,jcell)
+
+                  ENDDO
+               ENDIF
+            ENDDO
+
+         ! If the first point of the tile falls on a z-cell intersection but not y: 
+         ELSEIF ((MOD(kts-1,cell_width) .EQ. 0) .AND. (MOD(jts-1,cell_width) .NE. 0)) THEN
+
+            ! jts with respect to current cell:
+            cell_pt_y = cell_width - MOD(jts-1,cell_width) - 1
+
+            ! For all y-points from the start of the tile to the end of the cell:
+            DO jcell = jts,jts+cell_pt_y
+
+               ! For all k-points in the tile:
+               DO kcell = kts,kte
+                  IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+                     ! Assign value to this grid-cell:
+                     mom_pert_u(i,kcell,jcell) = mom_pert_u(i,kcell,jts-1)
+                  ENDIF
+               ENDDO
+            ENDDO
+
+         ! If the first point of the tile doesn't fall on an z- or y-cell intersection: 
+         ELSEIF ((MOD(kts-1,cell_width) .NE. 0) .AND. (MOD(jts-1,cell_width) .NE. 0)) THEN
+
+            ! kts and jts with respect to current cell:
+            cell_pt_z = cell_width - MOD(kts-1,cell_width) - 1
+            cell_pt_y = cell_width - MOD(jts-1,cell_width) - 1
+
+            ! For all z-points from the start of the tile to the end of the cell:
+            DO kcell = kts,kts+cell_pt_z
+
+               IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+
+                  ! Now for y: 
+                  DO jcell = jts,jts+cell_pt_y
+
+                     ! Assign value to this grid-cell:
+                     mom_pert_u(i,kcell,jcell) = mom_pert_u(i,kts-1,jts-1)
+
+                  ENDDO
+
+               ENDIF
+
+            ENDDO
+
+            ! For z's after end of cell to end of tile:
+            DO kcell = kts+cell_pt_z+1,kte
+
+               IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+
+                  !For lower y-boundary:
+                  DO jcell = jts,jts+cell_pt_y
+
+                     ! Assign values! 
+                     mom_pert_u(i,kcell,jcell) = mom_pert_u(i,kcell,jts-1)
+
+                  ENDDO
+
+               ENDIF
+
+            ENDDO
+
+            ! For y's after end of cell to end of tile:
+            DO jcell = jts+cell_pt_y+1,jte
+
+               !For lower x-boundary:
+               DO kcell = kts,kts+cell_pt_z
+                  IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+                     ! Assign values! 
+                     mom_pert_u(i,kcell,jcell) = mom_pert_u(i,kts-1,jcell)
+                  ENDIF
+               ENDDO
+            ENDDO
+         ENDIF
+      ENDDO
+
+   END SUBROUTINE mk_cells_u
+
+!------------------------------------------------------------------------
+
+   SUBROUTINE mk_cells_v (mom_pert_v,mom_pert_ktop,                     &
+                        mom_pert_kbot,cell_width,                       &
+                        mom_pert_amp,config_flags,grid,                 &
+                        its,ite,jts,jte,kts,kte,                        &
+                        ids,ide,jds,jde,kds,kde,                        &
+                        ips,ipe,jps,jpe,kps,kpe,                        &
+                        ims,ime,jms,jme,kms,kme)
+
+      ! __________ DECLARATIONS ___________
+      IMPLICIT NONE
+
+      ! Array dimentions:
+      INTEGER,INTENT(IN)::ids,ide,jds,jde,kds,kde,                      &
+                          its,ite,jts,jte,kts,kte,                      &
+                          ips,ipe,jps,jpe,kps,kpe,                      &
+                          ims,ime,jms,jme,kms,kme
+
+      ! Cell characteristics:
+      REAL,INTENT(IN)::mom_pert_ktop,mom_pert_kbot,mom_pert_amp
+      INTEGER,INTENT(IN)::cell_width
+
+      ! Grid pointer for intra-processor communications:
+      TYPE(domain),INTENT(IN)::grid
+
+      ! Structure that contains run-time configuration (namelist) data for
+      ! domain
+      TYPE(grid_config_rec_type),INTENT(IN)::config_flags
+
+      ! Array of Perturbations:
+      REAL,DIMENSION(ims:ime,kms:kme,jms:jme),INTENT(INOUT)::mom_pert_v
+
+      ! Other variables:
+      INTEGER::i,j,k,icell,jcell,kcell
+      REAL::rand_amp,cell_pt_x,cell_pt_y,cell_pt_z
+
+      ! ________ END DECLARATIONS _________
+
+      ! We will not call it for y, or our perturbations will look the same as x
+      CALL random_seed ! Must be called to randomnize the random # generator (-_-)
+
+      ! Fill up array:
+      ! - Begin by finding cell boundaries within tile.
+      ! - After finding the boundaries, fill up the rest of that cell 
+
+      !For each perturbed z:
+      DO k = mom_pert_kbot,mom_pert_ktop
+
+         ! For all x's in the tile:
+         DO i = its,ite-1
+
+            ! If this x falls on the transition between cells: 
+            IF (MOD(i-1,cell_width) .EQ. 0) THEN
+
+               ! For all y's in the tile:
+               DO j = jts,jte-1
+
+                  ! If this y falls on the transition between cells:
+                  IF (MOD(k-1,cell_width) .EQ. 0) THEN
+
+                     ! Define a random number from -1 to 1:
+                     CALL random_number(rand_amp)
+                     rand_amp = ((rand_amp*2)-1)*mom_pert_amp
+
+                     ! For all the gps in this cell (or rest of tile) in x:
+                     DO icell = i,min(i+cell_width,ite)
+
+                        ! For all the gps in this cell (or rest of tile) in y:
+                        DO kcell = k,min(k+cell_width,kte)
+
+                           IF (kcell .LE. mom_pert_ktop) THEN
+
+                              ! Assign value to this cell in the final array!
+                              mom_pert_v(icell,kcell,j) = rand_amp
+
+                           ENDIF
+                        ENDDO
+                     ENDDO
+                  ENDIF
+               ENDDO
+            ENDIF
+         ENDDO
+      ENDDO
+
+! Pass information between processors:
+#ifdef DM_PARALLEL
+#      include "HALO_EM_MOM_PERT_V.inc"
+#      include "PERIOD_EM_MOM_PERT_V.inc"
+#endif
+
+      ! Now fill the gaps between tiles!
+
+      ! For all perturbed points in y:
+      DO j = jts,jte
+
+         ! If the first point of the tile falls on a y-cell intersection but not x: 
+         IF ((MOD(its-1,cell_width) .NE. 0) .AND. (MOD(kts-1,cell_width) .EQ. 0)) THEN
+
+            ! its with respect to current cell:
+            cell_pt_x = cell_width - MOD(its-1,cell_width) -1
+
+            ! For all x-points from the start of the tile to the end of the cell:
+            DO icell = its,its+cell_pt_x
+
+               ! For all z-points in the tile:
+               DO kcell = kts,kte
+
+                  IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+
+                     ! Assign value to this grid-cell:
+                     mom_pert_v(icell,kcell,j) = mom_pert_v(its-1,kcell,j)
+
+                  ENDIF
+               ENDDO
+            ENDDO
+
+         ! If the first point of the tile falls on a x-cell intersection but not y: 
+         ELSEIF ((MOD(its-1,cell_width) .EQ. 0) .AND. (MOD(kts-1,cell_width) .NE. 0)) THEN
+
+            ! jts with respect to current cell:
+            cell_pt_z = cell_width - MOD(kts-1,cell_width) - 1
+
+            ! For all y-points from the start of the tile to the end of the cell:
+            DO kcell = kts,kts+cell_pt_z
+
+               IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+
+                  ! For all x-points in the tile:
+                  DO icell = its,ite
+
+                     ! Assign value to this grid-cell:
+                     mom_pert_v(icell,kcell,j) = mom_pert_v(icell,kts-1,j)
+
+                  ENDDO
+               ENDIF
+            ENDDO
+
+         ! If the first point of the tile doesn't fall on an x- or y-cell intersection: 
+         ELSEIF ((MOD(its-1,cell_width) .NE. 0) .AND. (MOD(kts-1,cell_width) .NE. 0)) THEN
+
+            ! its and jts with respect to current cell:
+            cell_pt_x = cell_width - MOD(its-1,cell_width) - 1
+            cell_pt_z = cell_width - MOD(kts-1,cell_width) - 1
+
+            ! For all x-points from the start of the tile to the end of the cell:
+            DO icell = its,its+cell_pt_x
+
+               ! Now for y: 
+               DO kcell = kts,kts+cell_pt_z
+                  IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+
+                     ! Assign value to this grid-cell:
+                     mom_pert_v(icell,kcell,j) = mom_pert_v(its-1,kts-1,j)
+
+                  ENDIF
+               ENDDO
+            ENDDO
+
+            ! For x's after end of cell to end of tile:
+            DO icell = its+cell_pt_x+1,ite
+
+               !For lower y-boundary:
+               DO kcell = kts,kts+cell_pt_z
+                  IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+                     ! Assign values! 
+                     mom_pert_v(icell,kcell,j) = mom_pert_v(icell,kts-1,j)
+
+                  ENDIF
+               ENDDO
+            ENDDO
+
+            ! For y's after end of cell to end of tile:
+            DO kcell = kts+cell_pt_z+1,kte
+               IF ((kcell .GE. mom_pert_kbot).AND.(kcell .LE. mom_pert_ktop)) THEN
+
+                  !For lower x-boundary:
+                  DO icell = its,its+cell_pt_x
+
+                     ! Assign values! 
+                     mom_pert_v(icell,kcell,j) = mom_pert_v(its-1,kcell,j)
+
+                  ENDDO
+               ENDIF
+            ENDDO
+         ENDIF
+      ENDDO
+
+   END SUBROUTINE mk_cells_v
+
+!------------------------------------------------------------------------
+
+   SUBROUTINE mk_cells_w (mom_pert_w,mom_pert_ktop,                     &
+                        mom_pert_kbot,cell_width,                       &
+                        mom_pert_amp,config_flags,grid,                 &
+                        its,ite,jts,jte,kts,kte,                        &
+                        ids,ide,jds,jde,kds,kde,                        &
+                        ips,ipe,jps,jpe,kps,kpe,                        &
+                        ims,ime,jms,jme,kms,kme)
+
+      ! __________ DECLARATIONS ___________
+      IMPLICIT NONE
+
+      ! Array dimentions:
+      INTEGER,INTENT(IN)::ids,ide,jds,jde,kds,kde,                      &
+                          its,ite,jts,jte,kts,kte,                      &
+                          ips,ipe,jps,jpe,kps,kpe,                      &
+                          ims,ime,jms,jme,kms,kme
+
+      ! Cell characteristics:
+      REAL,INTENT(IN)::mom_pert_ktop,mom_pert_kbot,mom_pert_amp
+      INTEGER,INTENT(IN)::cell_width
+
+      ! Grid pointer for intra-processor communications:
+      TYPE(domain),INTENT(IN)::grid
+
+      ! Structure that contains run-time configuration (namelist) data for domain
+      TYPE(grid_config_rec_type),INTENT(IN)::config_flags
+
+      ! Array of Perturbations:
+      REAL,DIMENSION(ims:ime,kms:kme,jms:jme),INTENT(INOUT)::mom_pert_w
+
+      ! Other variables:
+      INTEGER::i,j,k,icell,jcell
+      REAL::rand_amp,cell_pt_x,cell_pt_y
+
+      ! ________ END DECLARATIONS _________
+
+      ! We will not call it for y, or our perturbations will look the same as x
+      CALL random_seed ! Must be called to randomnize the random # generator (-_-)
+
+      ! Fill up array:
+      ! - Begin by finding cell boundaries within tile.
+      ! - After finding the boundaries, fill up the rest of that cell
+
+      !For each perturbed z:
+      DO k = mom_pert_kbot,mom_pert_ktop
+
+         ! For all x's in the tile:
+         DO i = its,ite-1
+
+            ! If this x falls on the transition between cells:
+            IF (MOD(i-1,cell_width) .EQ. 0) THEN
+
+               ! For all y's in the tile:
+               DO j = jts,jte-1
+
+                  ! If this y falls on the transition between cells:
+                  IF (MOD(j-1,cell_width) .EQ. 0) THEN
+
+                     ! Define a random number from -1 to 1:
+                     CALL random_number(rand_amp)
+                     rand_amp = ((rand_amp*2)-1)*mom_pert_amp
+
+                     ! For all the gps in this cell (or rest of tile) in x:
+                     DO icell = i,min(i+cell_width,ite)
+
+                        ! For all the gps in this cell (or rest of tile) in y:
+                        DO jcell = j,min(j+cell_width,jte)
+
+                           ! Assign value to this cell in the final array!
+                           mom_pert_w(icell,k,jcell) = rand_amp
+
+                        ENDDO
+                     ENDDO
+                  ENDIF
+               ENDDO
+            ENDIF
+         ENDDO
+      ENDDO
+
+! Pass information between processors:
+#ifdef DM_PARALLEL
+#      include "HALO_EM_MOM_PERT_W.inc"
+#      include "PERIOD_EM_MOM_PERT_W.inc"
+#endif
+
+      ! Now fill the gaps between tiles!
+
+      ! For all perturbed points in z:
+      DO k = mom_pert_kbot,mom_pert_ktop
+
+         ! If the first point of the tile falls on a y-cell intersection but not
+         ! x:
+         IF ((MOD(its-1,cell_width) .NE. 0) .AND. (MOD(jts-1,cell_width) .EQ. 0)) THEN
+
+            ! its with respect to current cell:
+            cell_pt_x = cell_width - MOD(its-1,cell_width) -1
+
+            ! For all x-points from the start of the tile to the end of the
+            ! cell:
+            DO icell = its,its+cell_pt_x
+
+               ! For all y-points in the tile:
+               DO jcell = jts,jte
+
+                  ! Assign value to this grid-cell:
+                  mom_pert_w(icell,k,jcell) = mom_pert_w(its-1,k,jcell)
+
+               ENDDO
+            ENDDO
+
+         ! If the first point of the tile falls on a x-cell intersection but not
+         ! y:
+         ELSEIF ((MOD(its-1,cell_width) .EQ. 0) .AND. (MOD(jts-1,cell_width) .NE. 0)) THEN
+
+            ! jts with respect to current cell:
+            cell_pt_y = cell_width - MOD(jts-1,cell_width) - 1
+
+            ! For all y-points from the start of the tile to the end of the
+            ! cell:
+            DO jcell = jts,jts+cell_pt_y
+
+               ! For all x-points in the tile:
+               DO icell = its,ite
+
+                  ! Assign value to this grid-cell:
+                  mom_pert_w(icell,k,jcell) = mom_pert_w(icell,k,jts-1)
+
+               ENDDO
+            ENDDO
+
+         ! If the first point of the tile doesn't fall on an x- or y-cell
+         ! intersection:
+         ELSEIF ((MOD(its-1,cell_width) .NE. 0) .AND. (MOD(jts-1,cell_width) .NE. 0)) THEN
+
+            ! its and jts with respect to current cell:
+            cell_pt_x = cell_width - MOD(its-1,cell_width) - 1
+            cell_pt_y = cell_width - MOD(jts-1,cell_width) - 1
+
+            ! For all x-points from the start of the tile to the end of the
+            ! cell:
+            DO icell = its,its+cell_pt_x
+
+               ! Now for y:
+               DO jcell = jts,jts+cell_pt_y
+
+                  ! Assign value to this grid-cell:
+                  mom_pert_w(icell,k,jcell) = mom_pert_w(its-1,k,jts-1)
+
+               ENDDO
+            ENDDO
+
+            ! For x's after end of cell to end of tile:
+            DO icell = its+cell_pt_x+1,ite
+
+               !For lower y-boundary:
+               DO jcell = jts,jts+cell_pt_y
+
+                  ! Assign values!
+                  mom_pert_w(icell,k,jcell) = mom_pert_w(icell,k,jts-1)
+
+               ENDDO
+            ENDDO
+
+            ! For y's after end of cell to end of tile:
+            DO jcell = jts+cell_pt_y+1,jte
+
+               !For lower x-boundary:
+               DO icell = its,its+cell_pt_x
+
+                  ! Assign values!
+                  mom_pert_w(icell,k,jcell) = mom_pert_w(its-1,k,jcell)
+
+               ENDDO
+            ENDDO
+         ENDIF
+      ENDDO
+
+   END SUBROUTINE mk_cells_w
+
+! -----------------------------------------------------------------------
+
+   SUBROUTINE mom_pert (field_tend,                                     &
+                        mom_pert_uv,config_flags,                       &
+                        its,ite,jts,jte,kts,kte,                        &
+                        ids,ide,jds,jde,kds,kde,                        &
+                        ims,ime,jms,jme,kms,kme)
+
+      ! __________ DECLARATIONS ___________
+      IMPLICIT NONE
+
+      ! Structure that contains run-time configuration (namelist) data for domain
+      TYPE(grid_config_rec_type),INTENT(IN)::config_flags
+
+      ! Tile dimentions:
+      INTEGER,INTENT(IN)::its,ite,jts,jte,kts,kte
+
+      ! Memory dimentions:
+      INTEGER,INTENT(IN)::ims,ime,jms,jme,kms,kme
+
+      ! Domain dimentions:
+      INTEGER,INTENT(IN)::ids,ide,jds,jde,kds,kde
+
+      ! Input tendency array to be perturbed:
+      REAL,DIMENSION(ims:ime,kms:kme,jms:jme),INTENT(INOUT)::field_tend
+
+      ! Output array of perturbations (perts only on boundaries):
+      REAL,DIMENSION(ims:ime,kms:kme,jms:jme),INTENT(INOUT)::mom_pert_uv
+
+      ! Other variables:
+      INTEGER :: i,j,k,mom_pert_gps,m_pert_locx,m_pert_locy
+      REAL,DIMENSION(ims:ime,kms:kme,jms:jme)::temp_mom_pert
+
+
+      ! ________ END DECLARATIONS _________
+
+      ! Store temporary array with previously calculated perturbations
+      temp_mom_pert = mom_pert_uv
+
+      ! Reset perturbation arrays to all zeros (before adding perts @ bdries)
+      mom_pert_uv(:,:,:) = 0
+
+      ! Extract number of perturbed gps at boundaries:
+      mom_pert_gps = config_flags%mom_pert_gps
+
+      ! Extract location of perturbed boundaries:
+      m_pert_locx = config_flags%m_pert_locx
+      m_pert_locy = config_flags%m_pert_locy
+
+!------ If the current memory size includes the perturbed region in -x:
+      IF (its-ids .LT. mom_pert_gps-1 ) THEN
+
+         ! If -x is perturbed:
+         IF (m_pert_locx .EQ. -1) THEN
+
+              ! For all z's:
+              DO k = kts,kte
+
+                 ! For all perturbed x's:
+                 DO i = its,MIN(ite,ids+mom_pert_gps-1)
+
+                    ! For all y's:
+                    DO j = jts,jte
+
+                       ! Add perturbation where needed:
+                       field_tend(i,k,j) = field_tend(i,k,j) +                &
+                                           temp_mom_pert(i,k,j)
+                       mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +              &
+                                            temp_mom_pert(i,k,j)
+
+                    ENDDO
+                 ENDDO
+
+                 ! If the current memory size ALSO includes the perturbed region in -y:
+                 IF ((jts-jds .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. -1)) THEN
+
+                    ! For all x's (ignoring the perturbed x-region, since it was
+                    ! already perturbed):
+                    DO i = ids+mom_pert_gps,ite
+
+                       ! For all perturbed y's:
+                       DO j = jts,MIN(jte,jds+mom_pert_gps-1)
+
+                          ! Add perturbation where needed:
+                          field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                              temp_mom_pert(i,k,j)
+                          mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                               temp_mom_pert(i,k,j)
+
+                       ENDDO
+                    ENDDO
+
+                 ! If the current memory size ALSO includes the perturbed region in +y:
+                 ELSEIF ((jde-jte .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. 1)) THEN
+
+                    ! For all x's (ignoring the perturbed x-region, since it was
+                    ! already perturbed):
+                    DO i = ids+mom_pert_gps,ite
+
+                       ! For all perturbed y's:
+                       DO j = MAX(jts,jde-mom_pert_gps+1),jte
+
+                          ! Add perturbation where needed:
+                          field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                              temp_mom_pert(i,k,j)
+                          mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                               temp_mom_pert(i,k,j)
+
+                       ENDDO
+                    ENDDO
+                 ENDIF
+              ENDDO
+
+         ! If -x is NOT perturbed:
+         ELSEIF (m_pert_locx .NE. -1) THEN
+
+              ! If the current memory size includes the perturbed region in -y:
+              IF ((jts-jds .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. -1)) THEN
+
+                 ! For all z's:
+                 DO k = kts,kte
+
+                    ! For all x's: 
+                    DO i = its,ite
+
+                       ! For all perturbed y's:
+                       DO j = jts,MIN(jte,jds+mom_pert_gps-1)
+
+                          ! Add perturbation where needed:
+                          field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                              temp_mom_pert(i,k,j)
+                          mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                               temp_mom_pert(i,k,j)
+
+                       ENDDO
+                    ENDDO
+                 ENDDO
+
+              ! If the current memory size includes the perturbed region in +y:
+              ELSEIF ((jde-jte .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. 1)) THEN
+
+                 ! For all z's:
+                 DO k = kts,kte
+
+                    ! For all x's:
+                    DO i = its,ite
+
+                       ! For all perturbed y's:
+                       DO j = MAX(jts,jde-mom_pert_gps+1),jte
+
+                          ! Add perturbation where needed:
+                          field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                              temp_mom_pert(i,k,j)
+                          mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                               temp_mom_pert(i,k,j)
+
+                       ENDDO
+                    ENDDO
+                 ENDDO
+              ENDIF
+         ENDIF
+
+!---- If the current memory size does not include the perturbed +x pr -x region,
+      ! but it includes the perturbed region in -y:
+      ELSEIF ((jts-jds .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. -1)) THEN
+
+         ! For all z's:
+         DO k = kts,kte
+
+            ! For all x's:
+            DO i = its,ite
+
+               ! For all perturbed y's:
+               DO j = jts,MIN(jte,jds+mom_pert_gps-1)
+
+                  ! Add perturbation where needed:
+                  field_tend(i,k,j) = field_tend(i,k,j) +                &
+                                      temp_mom_pert(i,k,j)
+                  mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +              &
+                                       temp_mom_pert(i,k,j)
+
+               ENDDO
+            ENDDO
+         ENDDO
+
+      ! If the current memory size does not include the perturbed +x or -x region,
+      ! but it includes the perturbed region in +y:
+      ELSEIF ((jde-jte .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. 1)) THEN
+         ! For all z's:
+         DO k = kts,kte
+
+            ! For all x's:
+            DO i = its,ite
+
+               ! For all perturbed y's:
+               DO j = MAX(jts,jde-mom_pert_gps+1),jte
+
+                  ! Add perturbation where needed:
+                  field_tend(i,k,j) = field_tend(i,k,j) +                &
+                                      temp_mom_pert(i,k,j)
+                  mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +              &
+                                       temp_mom_pert(i,k,j)
+
+               ENDDO
+            ENDDO
+         ENDDO
+
+!------ If the current memory size includes the perturbed region in +x:
+
+      ELSEIF (ide-ite .LT. mom_pert_gps-1 ) THEN
+
+         ! If +x is perturbed:
+         IF (m_pert_locx .EQ. 1) THEN
+
+            ! For all z's:
+            DO k = kts,kte
+
+               ! For all perturbed x's:
+               DO i = MAX(its,ide-mom_pert_gps+1),ite
+
+                  ! For all y's:
+                  DO j = jts,jte
+
+                     ! Add perturbation where needed:
+                     field_tend(i,k,j) = field_tend(i,k,j) +                &
+                                         temp_mom_pert(i,k,j)
+                     mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +              &
+                                          temp_mom_pert(i,k,j)
+
+                  ENDDO
+               ENDDO
+
+               ! If the current memory size ALSO includes the perturbed region in -y:
+               IF ((jts-jds .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. -1)) THEN
+
+                  ! For all x's:
+                  DO i = its,ite
+
+                     ! For all perturbed y's:
+                     DO j = jts,MIN(jte,jds+mom_pert_gps-1)
+
+                        ! Add perturbation where needed:
+                        field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                            temp_mom_pert(i,k,j)
+                        mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                             temp_mom_pert(i,k,j)
+
+                     ENDDO
+                  ENDDO
+               ENDIF
+
+               ! If the current memory size ALSO includes the perturbed region in +y:
+               IF ((jde-jte .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. 1)) THEN
+
+                  ! For all x's:
+                  DO i = its,ite
+
+                     ! For all perturbed y's:
+                     DO j = MAX(jts,jde-mom_pert_gps+1),jte
+
+                        ! Add perturbation where needed:
+                        field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                            temp_mom_pert(i,k,j)
+                        mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                             temp_mom_pert(i,k,j)
+
+                     ENDDO
+                  ENDDO
+               ENDIF
+            ENDDO
+
+         ! If +x is NOT perturbed:
+         ELSEIF (m_pert_locx .NE. 1) THEN
+
+            ! If the current memory size ALSO includes the perturbed region in -y:
+            IF ((jts-jds .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. -1)) THEN
+
+               ! For all z's:
+               DO k = kts,kte
+
+                  ! For all x's (ignoring the perturbed x-region, since it was
+                  ! already perturbed):
+                  DO i = its,ide-mom_pert_gps+1
+
+                     ! For all perturbed y's:
+                     DO j = jts,MIN(jte,jds+mom_pert_gps-1)
+
+                        ! Add perturbation where needed:
+                        field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                            temp_mom_pert(i,k,j)
+                        mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                             temp_mom_pert(i,k,j)
+
+                     ENDDO
+                  ENDDO
+               ENDDO
+
+            ! If the current memory size ALSO includes the perturbed region in +y:
+            ELSEIF ((jde-jte .LT. mom_pert_gps-1) .AND. (m_pert_locy .EQ. 1)) THEN
+
+              ! For all z's:
+               DO k = kts,kte
+
+                  ! For all x's (ignoring the perturbed x-region, since it was
+                  ! already perturbed):
+                  DO i = its,ide-mom_pert_gps+1
+
+                     ! For all perturbed y's:
+                     DO j = MAX(jts,jde-mom_pert_gps+1),jte
+
+                        ! Add perturbation where needed:
+                        field_tend(i,k,j) = field_tend(i,k,j) +             &
+                                            temp_mom_pert(i,k,j)
+                        mom_pert_uv(i,k,j) = mom_pert_uv(i,k,j) +           &
+                                             temp_mom_pert(i,k,j)
+
+                     ENDDO
+                  ENDDO
+               ENDDO
+            ENDIF
+         ENDIF
+      ENDIF
+
+
+   END SUBROUTINE mom_pert
+
+!------------------------------- END LJMB -------------------------------
+!------------------------------------------------------------------------
 
 
 !------------------------------------------------------------------------
