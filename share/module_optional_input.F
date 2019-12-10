@@ -40,7 +40,8 @@ MODULE module_optional_input
    INTEGER :: flag_extra_levels
 
    INTEGER :: flag_canfra   , flag_clayfrac   , flag_erod     , flag_frc_urb2d , flag_imperv , &
-              flag_lai12m   , flag_lake_depth , flag_sandfrac , flag_urb_param , flag_var_sso
+              flag_lai12m   , flag_lake_depth , flag_sandfrac , flag_urb_param , flag_var_sso, &
+              flag_bathymetry
 
    INTEGER                  :: num_soil_levels_input
    INTEGER                  :: num_st_levels_input , num_sm_levels_input , num_sw_levels_input
@@ -730,10 +731,30 @@ USE module_io_domain
       flag_lake_depth      = 0 
 
       flag_name(1:10) = 'LAKE_DEPTH'
+      print*,'flag_lake_depth before:',flag_lake_depth
+      print*,fid, 'FLAG_' // flag_name, itmp, 1, icnt, ierr
       CALL wrf_get_dom_ti_integer ( fid, 'FLAG_' // flag_name, itmp, 1, icnt, ierr ) 
       IF ( ierr .EQ. 0 ) THEN
          flag_lake_depth      = itmp
       END IF
+      print*,'flag_lake_depth after:',flag_lake_depth
+
+
+      ! PSH
+      flag_bathymetry      = 0 
+
+      flag_name(1:10) = 'BATHYMETRY'
+      print*,'flag_bathymetry before:',flag_bathymetry
+      PRINT*,'PSH flag_bathymetry'
+      print*,fid, 'FLAG_' // flag_name, itmp, 1, icnt, ierr
+      CALL wrf_get_dom_ti_integer ( fid, 'FLAG_' // flag_name, itmp, 1, icnt, ierr ) 
+      IF ( ierr .EQ. 0 ) THEN
+         print*, 'got here...'
+         flag_bathymetry      = itmp
+      END IF
+      print*,'flag_bathymetry after:',flag_bathymetry
+      
+      ! END PSH
 
 
       flag_name = '                                                                                '
