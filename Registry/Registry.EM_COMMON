@@ -818,8 +818,11 @@ state    real   XLAIDYN          ij     misc        1         -     -         "X
 state    real   SSTSK            ij     misc        1         -     rhd=(interp_mask_field:lu_index,iswater)u=(copy_fcnm)   "SSTSK"              "SKIN SEA SURFACE TEMPERATURE" "K"
 state    real   lake_depth            ij     misc        1    -     i012rd=(interp_mask_water_field:lu_index,islake)   "lake_depth"              "lake depth" "m"
 # PSH
-state    real   bathymetry       ij     misc        1         -     i0124rd=(interp_mask_water_field:lu_index,iswater)  "bathymetry"  "global bathymetry" "m"
-state  integer  BATHYMETRY_FLAG   -     misc        1         -     i0        "BATHYMETRY_FLAG"   "Flag for bathymetry in the global attributes for metgrid data"
+state    real     bathymetry       ij     misc        1         -     i0124rd=(interp_mask_water_field:lu_index,iswater)  "bathymetry"  "global bathymetry" "m"
+state    integer  BATHYMETRY_FLAG   -     misc        1         -     i0        "BATHYMETRY_FLAG"   "Flag for bathymetry in the global attributes for metgrid data"
+rconfig  real     bathymetry_default      namelist,physics      max_domains   100       rh    "bathymetry_default"  "default bathymetry"      "m"   
+rconfig  real     bathymetry_min_elev     namelist,physics      max_domains   10        rh    "lake_min_elev"        ""      ""  
+rconfig  integer  use_bathymetry          namelist,physics      max_domains   1         rh    "use_lakedepth"     ""      ""  
 # END PSH
 state    real   DTW              ij     misc        1         -     r   "DTW"              "WARM LAYER TEMP DIFF" "C"
 # Ocean surface currents
