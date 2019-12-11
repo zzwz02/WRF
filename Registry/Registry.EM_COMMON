@@ -819,6 +819,8 @@ state    real   SSTSK            ij     misc        1         -     rhd=(interp_
 state    real   lake_depth            ij     misc        1    -     i012rd=(interp_mask_water_field:lu_index,islake)   "lake_depth"              "lake depth" "m"
 # PSH
 state    real   bathymetry       ij     misc        1         -     i0124rd=(interp_mask_water_field:lu_index,iswater)  "bathymetry"  "global bathymetry" "m"
+state  integer  BATHYMETRY_FLAG   -     misc        1         -     i0        "BATHYMETRY_FLAG"   "Flag for bathymetry in the global attributes for metgrid data"
+# END PSH
 state    real   DTW              ij     misc        1         -     r   "DTW"              "WARM LAYER TEMP DIFF" "C"
 # Ocean surface currents
 state    real   UOCE            ij     misc        1         -     i0124rd=(interp_mask_water_field:lu_index,iswater)  "UOCE"  "SEA SURFACE ZONAL CURRENTS" "m s-1"
@@ -3067,6 +3069,7 @@ rconfig  real       iccg_prescribed_den      namelist,physics   max_domains    1
 rconfig  integer    cellcount_method         namelist,physics   max_domains    0       -   "cellcount_method"          "0=auto, 1=tile, 2=domain"                   ""
 rconfig  real       cldtop_adjustment        namelist,physics   max_domains    0.      -   "cldtop_adjustment"         "Adjustment to cloud top for ltng param"     "km"
 rconfig  integer    sf_lake_physics          namelist,physics   max_domains    0       -   "sf_lake_physics"           "activate lake model  0=no, 1=yes"   ""
+rconfig  integer    sf_bathymetry            namelist,physics   max_domains    0       -   "sf_bathymetry"             "activate bathymetry  0=no, 1=yes"   ""
 
 state    real  iccg_in_num    ij      misc        1         -      i{16}r     "iccg_in_num"      "IC:CG input numerator"      ""
 state    real  iccg_in_den    ij      misc        1         -      i{16}r     "iccg_in_den"      "IC:CG input denominator"    ""
