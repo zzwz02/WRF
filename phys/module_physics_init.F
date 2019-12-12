@@ -167,8 +167,7 @@ CONTAINS
                          lakemask,   lakeflag,                                   & !lake
 #endif
                          lake_depth_flag, use_lakedepth,                         & !lake
-                         bathymetry_default, bathymetry_min_elev,            & ! PSH -bath
-                         bathymetry, bathymetry_flag, use_bathymetry,        & ! PSH -bath
+                         water_depth, bathymetry_flag, use_bathymetry,       & ! PSH -bath
                          sf_surface_mosaic, mosaic_cat, NLCAT,               & ! Noah tiling
 !CLM variables
                          maxpatch,                                           &
@@ -696,9 +695,8 @@ CONTAINS
   LOGICAL, DIMENSION( ims:ime, jms:jme ),intent(out)                      :: lake2d
 !  REAL,    DIMENSION( ims:ime, jms:jme ), INTENT(IN)                      ::  HT
   REAL, OPTIONAL,    DIMENSION( ims:ime, jms:jme ), INTENT(IN)    ::  lake_depth
-  REAL, OPTIONAL,    DIMENSION( ims:ime, jms:jme ), INTENT(IN)    ::  bathymetry ! PSH
+  REAL, OPTIONAL,    DIMENSION( ims:ime, jms:jme ), INTENT(IN)    ::  water_depth ! PSH
   real, intent(in)      ::      lakedepth_default, lake_min_elev
-  real, intent(in)      ::      bathymetry_default, bathymetry_min_elev ! PSH
 #if ( EM_CORE == 1 )
   REAL,              dimension(ims:ime,jms:jme )      ::  lakemask
   INTEGER, INTENT(IN)      ::  lakeflag
@@ -1318,8 +1316,7 @@ CONTAINS
                 lakemask, lakeflag,                                    & !lake
 #endif
                 lake_depth_flag, use_lakedepth,                        & !lake
-                bathymetry_default, bathymetry_min_elev, bathymetry,     & ! PSH
-                bathymetry_flag, use_bathymetry,                         & ! PSH
+                water_depth, bathymetry_flag, use_bathymetry,   & ! PSH
                 te_temf,cf3d_temf,wm_temf,                      & ! WA
                 DZR, DZB, DZG,                                  & !Optional urban
                 TR_URB2D,TB_URB2D,TG_URB2D,TC_URB2D,QC_URB2D,   & !Optional urban
@@ -2310,8 +2307,7 @@ CONTAINS
                 lakemask, lakeflag,                                      & !lake
 #endif
                 lake_depth_flag, use_lakedepth,                          & !lake
-                bathymetry_default, bathymetry_min_elev, bathymetry,     & ! PSH
-                bathymetry_flag, use_bathymetry,                         & ! PSH
+                water_depth,bathymetry_flag, use_bathymetry,    & ! PSH
                 te_temf,cf3d_temf,wm_temf,                      & ! WA
 !                num_roof_layers,num_wall_layers,num_road_layers,& !Optional urban
                 DZR, DZB, DZG,                                  & !Optional urban
@@ -2477,7 +2473,6 @@ CONTAINS
 !   INTEGER , INTENT(IN)        ::     LakeModel
    INTEGER         ::     LakeModel
    real, intent(in)            ::      lakedepth_default,lake_min_elev
-   real, intent(in)            ::      bathymetry_default,bathymetry_min_elev ! PSH
    REAL ,    INTENT(IN)        ::     DT, BLDT
    REAL ,    INTENT(IN)        ::     DX, DY
 #if (EM_CORE == 1)
@@ -2735,7 +2730,7 @@ CONTAINS
  
   logical,    dimension(ims:ime,jms:jme ),intent(out)                        :: lake2d
   REAL, OPTIONAL,    DIMENSION( ims:ime, jms:jme ), INTENT(IN)    ::  lake_depth
-  REAL, OPTIONAL,    DIMENSION( ims:ime, jms:jme ), INTENT(IN)    ::  bathymetry ! PSH
+  REAL, OPTIONAL,    DIMENSION( ims:ime, jms:jme ), INTENT(IN)    ::  water_depth ! PSH
 #if ( EM_CORE == 1 )
   REAL,              dimension(ims:ime,jms:jme ),intent(inout)      ::  lakemask
   INTEGER, INTENT(IN)      ::  lakeflag
