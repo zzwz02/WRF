@@ -24,7 +24,14 @@ CONTAINS
                      ids,ide, jds,jde, kds,kde,                    &
                      ims,ime, jms,jme, kms,kme,                    &
                      its,ite, jts,jte, kts,kte,                    &
-                     ustm,ck,cka,cd,cda,isftcflx,iz0tlnd,scm_force_flux           )
+                     spec_hfx,                                     & !JDM-MMC
+                     spec_z0,                                      & ! DME-MMC
+                     spec_ideal,                                   & ! DME-MMC
+                     itimestep,                                    & ! DME-MMC
+                     ustt,                                         & ! DME-MMC
+                     molt,                                         & ! DME-MMC
+                     ustm,ck,cka,cd,cda,isftcflx,iz0tlnd,scm_force_flux )
+     
 !-------------------------------------------------------------------
       IMPLICIT NONE
 !-------------------------------------------------------------------
@@ -134,8 +141,11 @@ CONTAINS
       REAL,     DIMENSION( ims:ime, jms:jme )                    , &
                 INTENT(IN   )               ::             MAVAIL, &
                                                              PBLH, &
-                                                            XLAND, &
-                                                              TSK
+                                                            XLAND
+
+      REAL,     DIMENSION( ims:ime, jms:jme )                    , & !JDM-MMC
+                INTENT(INOUT )               ::               TSK
+            
       REAL,     DIMENSION( ims:ime, jms:jme )                    , &
                 INTENT(OUT  )               ::                U10, &
                                                               V10, &
@@ -181,7 +191,17 @@ CONTAINS
                                                               QGH
                                     
       REAL,     INTENT(IN   )               ::   CP,G,ROVCP,R,XLV,DX
- 
+
+      REAL,     INTENT(IN   )            ::   spec_hfx        !JDM-MMC
+
+      REAL,     INTENT(IN   )            ::   spec_z0         ! DME-MMC
+
+      LOGICAL,  INTENT(IN   )            ::   spec_ideal      ! DME-MMC
+
+      INTEGER,  INTENT(IN   )            ::   itimestep       ! DME-MMC
+
+      REAL,     DIMENSION( ims:ime, jms:jme ), INTENT(INOUT)   ::   ustt,molt ! DME-MMC
+      
       REAL, OPTIONAL, DIMENSION( ims:ime, jms:jme )              , &
                 INTENT(OUT)     ::                  ck,cka,cd,cda
 
@@ -190,6 +210,7 @@ CONTAINS
 
       INTEGER,  OPTIONAL,  INTENT(IN )   ::     ISFTCFLX, IZ0TLND
       INTEGER,  OPTIONAL,  INTENT(IN )   ::     SCM_FORCE_FLUX
+
 ! LOCAL VARS
 
       REAL,     DIMENSION( its:ite ) ::                       U1D, &
@@ -201,6 +222,37 @@ CONTAINS
       REAL,     DIMENSION( its:ite ) ::                    dz8w1d
 
       INTEGER ::  I,J
+
+      REAL :: dth_i, thx_i ! DME-MMC
+
+! DME-MMC modifications to set z0 and properly calculate TSK from an imposed heat flux (spec_hfx, W m-2)
+      IF ( spec_ideal ) THEN
+        DO J=jts,jte
+          DO I=its,ite
+            ust(i,j) = ustt(i,j)
+            mol(i,j) = molt(i,j)
+            znt(i,j) = spec_z0
+          ENDDO
+        ENDDO
+        IF (itimestep .ne. 1) THEN
+          DO J=jts,jte
+            DO I=its,ite
+              IF (spec_hfx .eq. 0.) THEN
+                dth_i = 0.
+                thx_i = t3d(i,1,j)*(P1000mb/p3d(i,1,j))**rovcp
+                tsk(i,j) = (dth_i + thx_i)/(P1000mb/(psfc(i,j)))**rovcp
+              ELSEIF (flhc(i,j) .ne. 0. ) THEN
+                dth_i = spec_hfx/flhc(i,j)
+                thx_i = t3d(i,1,j)*(P1000mb/p3d(i,1,j))**rovcp
+                tsk(i,j) = (dth_i + thx_i)/(P1000mb/(psfc(i,j)))**rovcp
+              ELSE
+                ! do nothing, flhc(i,j) = 0.0...
+              ENDIF
+            ENDDO
+          ENDDO
+        ENDIF
+      ENDIF
+! DME-MMC
 
       DO J=jts,jte
         DO i=its,ite
@@ -239,8 +291,17 @@ CONTAINS
                 USTM(ims,j),CK(ims,j),CKA(ims,j),                  &
                 CD(ims,j),CDA(ims,j)                               &
 #endif
-                                                                   )
+                                                                    )
       ENDDO
+
+      IF ( spec_ideal ) THEN ! DME-MMC
+        DO J=jts,jte
+          DO I=its,ite
+            ustt(i,j) = ust(i,j)
+            molt(i,j) = mol(i,j)
+          ENDDO
+        ENDDO
+      ENDIF
 
 
    END SUBROUTINE SFCLAYREV
@@ -449,7 +510,13 @@ CONTAINS
       DO 60 I=its,ite
         E1=SVP1*EXP(SVP2*(TGDSA(I)-SVPT0)/(TGDSA(I)-SVP3))                       
 !  for land points QSFC can come from previous time step
-        if(xland(i).gt.1.5.or.qsfc(i).le.0.0)QSFC(I)=EP2*E1/(PSFC(I)-E1)                                                 
+!!!JAS-MMC
+!!! Original qsfc(i).le.0.0 permits qsfc = 0.0 to lead to a non-zero QFX for 
+!!! dry idealized scenarios. Modifying to strictly .lt. here solves the problem. 
+!!!      if(xland(i).gt.1.5.or.qsfc(i).le.0.0)QSFC(I)=EP2*E1/(PSFC(I)-E1)                                                 
+        if(xland(i).gt.1.5.or.qsfc(i).lt.0.0)QSFC(I)=EP2*E1/(PSFC(I)-E1)   
+!!!JAS-MMC      
+                                              
 ! QGH CHANGED TO USE LOWEST-LEVEL AIR TEMP CONSISTENT WITH MYJSFC CHANGE
 ! Q2SAT = QGH IN LSM
         E1=SVP1*EXP(SVP2*(T1D(I)-SVPT0)/(T1D(I)-SVP3))                       
@@ -1001,7 +1068,7 @@ CONTAINS
         ELSE
           ZL = 0.01
         ENDIF                                                                    
-        FLQC(I)=RHOX(I)*MAVAIL(I)*UST(I)*KARMAN/DENOMQ(I)
+        FLQC(I)=RHOX(I)*MAVAIL(I)*UST(I)*KARMAN/DENOMQ(I)        
 !       FLQC(I)=RHOX(I)*MAVAIL(I)*UST(I)*KARMAN/(   &
 !               ALOG(KARMAN*UST(I)*ZA(I)/XKA+ZA(I)/ZL)-PSIH(I))
         DTTHX=ABS(THX(I)-THGB(I))                                            
@@ -1011,7 +1078,8 @@ CONTAINS
  1001   format(f8.5,2x,f12.7,2x,f12.10,2x,f12.10,2x,f13.10,2x,f12.8,f12.8,2x,i3)
         ELSE                                                                     
           FLHC(I)=0.                                                             
-        ENDIF                                                                    
+        ENDIF
+       
   360 CONTINUE                                                                   
 
 !                                                                                
@@ -1043,8 +1111,10 @@ CONTAINS
 !         ENDIF 
         ELSEIF(XLAND(I)-1.5.LT.0.)THEN                                       
           HFX(I)=FLHC(I)*(THGB(I)-THX(I))                                
-          HFX(I)=AMAX1(HFX(I),-250.)                                       
-        ENDIF                                                                  
+          HFX(I)=AMAX1(HFX(I),-250.)
+          
+        ENDIF
+        
   400 CONTINUE                                                                 
 
   405 CONTINUE                                                                 

@@ -26,3 +26,6 @@ include registry.bdy_perturb
 include registry.hyb_coord
 include registry.new3d_wif
 include registry.trad_fields
+include registry.tsout
+include registry.cell_pert
+include registry.mom_pert

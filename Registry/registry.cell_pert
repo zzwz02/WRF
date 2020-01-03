@@ -1,0 +1,35 @@
+###########################################################################################
+# Cell perturbation method for inflow turbulence generation (Domingo Munoz-Esparza, NCAR) #
+###########################################################################################
+rconfig logical   cell_pert         namelist,dynamics       max_domains     .false.  -       "flag to activate cell perturbation method"
+rconfig logical   cell_pert_2d      namelist,dynamics       max_domains     .false.  -       "flag to activate cell perturbations along 2 boundaries"
+rconfig logical   cell_pert_1d      namelist,dynamics       max_domains     .false.  -       "flag to activate cell perturbations along 1 boundary (west)"
+rconfig integer   cell_pert_2d_opt  namelist,dynamics       max_domains     0        -       "==0: 2-boundaries (south and west); ==1: 2-boundaries (north and west)"
+rconfig real      cell_pert_amp     namelist,dynamics       max_domains     0.1      -       "maximum amplitude for the potential temperature perturbations"
+rconfig real      pert_tsec         namelist,dynamics       max_domains     100.     -       "number of seconds after which perturbations are seeded"
+rconfig integer   cell_gppc         namelist,dynamics       max_domains     8        -       "number of grid points conforming the cell" 
+rconfig integer   cell_nbcx         namelist,dynamics       max_domains     3        -       "number of cells normal to x-boundary"
+rconfig integer   cell_nbcy         namelist,dynamics       max_domains     3        -       "number of cells normal to y-boundary"
+rconfig real      cell_zbottom      namelist,dynamics       max_domains     20.      -       "vertical height (m) where the perturbations start"
+rconfig integer   cell_kbottom      namelist,dynamics       max_domains     2        -       "vertical height (m) where the perturbations start"
+rconfig real      cell_ztop         namelist,dynamics       max_domains     400.     -       "vertical height (m) where the perturbations end"
+state   real      Pxy          ikj          dyn_em                          1        -       -      "Pxy" "Potential temperature perturbation field" "K"
+# residual layer
+rconfig logical   cell_pert_RL      namelist,dynamics       max_domains     .false.  -       "flag to activate cell perturbation method for residual layer (RL)"
+rconfig real      cellRL_zbottom    namelist,dynamics       max_domains     0.       -       "vertical height (m) where the perturbations start RL"
+rconfig real      cellRL_ztop       namelist,dynamics       max_domains     0.       -       "vertical height (m) where the perturbations end RL"
+rconfig real      cellRL_pert_amp   namelist,dynamics       max_domains     0.1      -       "maximum amplitude for the potential temperature perturbations RL"
+# CBL 
+rconfig logical   cell_pert_cbl     namelist,dynamics       max_domains     .false.  -       "flag to activate cell perturbation method for convective boundary layers"
+rconfig real      cell_cbl_zitop    namelist,dynamics       max_domains     1000.    -       "boundary layer height for CBL scaling (m)"
+rconfig real      cell_cbl_uowthst  namelist,dynamics       max_domains     1.       -       "ratio of capping inversion wind speed to convective velocity scale times temperature scale (K)"
+### time-varying parameters for the cell perturbation method
+rconfig logical   cell_tvcp         namelist,dynamics       max_domains    .false.   -       "flag to activate time-varying cell perturbation parameters"
+state   real      zpert_tvcp         -         dyn_em       max_domains     -       i5r      "zpert_tvcp" "time-varying maximum vertical height to perturb" "m"     
+state   real      dthpert_tvcp       -         dyn_em       max_domains     -       i5r      "dthpert_tvcp" "time-varying potential temperature perturbation magnitude" "K"
+state   real      zpertRLs_tvcp      -         dyn_em       max_domains     -       i5r      "zpertRLs_tvcp" "time-varying lowest vertical height to perturb RL" "m"
+state   real      zpertRLe_tvcp      -         dyn_em       max_domains     -       i5r      "zpertRLe_tvcp" "time-varying highest vertical height to perturb RL" "m"
+state   real      dthpertRL_tvcp     -         dyn_em       max_domains     -       i5r      "dthpertRL_tvcp" "time-varying potential temperature perturbation magnitude RL" "K"
+###
+halo      HALO_EM_PXY       dyn_em 8:Pxy
+period    PERIOD_EM_PXY     dyn_em 3:Pxy
