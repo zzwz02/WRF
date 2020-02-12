@@ -3553,7 +3553,7 @@ BENCH_START(moist_physics_prep_tim)
          CALL wrf_debug ( 200 , ' call bulk_dust_emis' )
          CALL bulk_dust_emis (grid%itimestep,dtm,config_flags%num_soil_layers  &
                ,grid%u_phy,grid%v_phy,grid%rho,grid%alt                        &
-               ,grid%u10,grid%v10,p8w,dz8w,grid%smois,grid%aerod               &
+               ,grid%u10,grid%v10,p8w,dz8w,grid%smois,grid%erod                &
                ,grid%ivgtyp,grid%isltyp,grid%vegfra,grid%albbck,grid%xland     &
                ,grid%dx, g, grid%qnifa2d, ids,ide, jds,jde, kds,kde            &
                ,ims,ime, jms,jme, kms,kme                                      &
