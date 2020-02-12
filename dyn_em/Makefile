@@ -26,6 +26,8 @@ MODULES =                 		\
 	module_sfs_driver.o		\
 	module_stoch.o			\
 	module_after_all_rk_steps.o	\
+        module_tsout.o                  \
+        module_cellpert.o                  \
 	$(CASE_MODULE)
 
 # possible CASE_MODULE settings
