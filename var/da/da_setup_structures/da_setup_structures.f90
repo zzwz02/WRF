@@ -46,7 +46,7 @@ module da_setup_structures
       vert_corr,max_vert_var5,power_truncation,alpha_truncation, &
       print_detail_regression,gas_constant, use_airsretobs, &
       filename_len, use_ssmisobs, gravity, t_triple, use_hirs4obs, use_mhsobs, &
-      use_mwtsobs, use_mwhsobs, use_atmsobs,    &
+      use_mwtsobs, use_mwhsobs, use_mwhs2obs, use_atmsobs, &
       vert_corr_2, alphacv_method_xa, vert_evalue_global, &
       vert_evalue_local, obs_names, thin_conv, thin_conv_ascii, &
       sound, sonde_sfc, mtgirs, tamdar, tamdar_sfc, synop, profiler, gpsref, gpspw, polaramv, geoamv, ships, metar, &
@@ -72,6 +72,7 @@ module da_setup_structures
    use da_control, only: use_cv_w
    use da_control, only: pseudo_tpw, pseudo_ztd, pseudo_ref, pseudo_uvtpq, pseudo_elv, anal_type_qcobs
    use da_control, only: use_gpsephobs, gpseph_loadbalance, gpseph
+   use da_control, only: ep_format
 
    use da_obs, only : da_fill_obs_structures, da_store_obs_grid_info, da_store_obs_grid_info_rad, &
                       da_fill_obs_structures_rain, da_fill_obs_structures_radar, da_set_obs_missing,da_set_3d_obs_missing
@@ -127,6 +128,8 @@ contains
 #include "da_chgvres.inc"
 #include "da_setup_flow_predictors.inc"
 #include "da_setup_flow_predictors_para_read_opt1.inc"
+#include "da_setup_flow_predictors_ep_format2.inc"
+#include "da_setup_flow_predictors_ep_format3.inc"
 #include "da_setup_obs_structures.inc"
 #include "da_setup_obs_structures_ascii.inc"
 #include "da_setup_obs_structures_bufr.inc"

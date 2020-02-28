@@ -214,6 +214,13 @@ integer::oops1,oops2
             geogrid_flag_error = geogrid_flag_error + 1
          END IF
 
+         ! PSH
+         IF ( ( config_flags%use_bathymetry      .EQ. 1           ) .AND. ( flag_bathymetry .EQ. 0 ) ) THEN
+            CALL wrf_message ( '----- ERROR: use_bathymetry      = 1 AND flag_bathymetry = 0 ' )
+            geogrid_flag_error = geogrid_flag_error + 1
+         END IF
+         ! END PSH
+
          IF ( ( config_flags%sf_surface_physics .EQ. pxlsmscheme  ) .AND. ( flag_imperv    .EQ. 0 ) ) THEN
             CALL wrf_message ( '----- ERROR: sf_surface_physics = 7 AND flag_imperv     = 0 ' )
             geogrid_flag_error = geogrid_flag_error + 1
@@ -313,6 +320,34 @@ integer::oops1,oops2
             END DO
          END IF
       END IF
+
+      ! PSH
+      IF ( grid%use_bathymetry   .EQ. 1 ) THEN
+         grid%bathymetry_flag = flag_bathymetry
+         IF ( flag_bathymetry .EQ. 0 ) THEN
+            CALL wrf_message ( " Warning: Please rerun WPS to get bathymetry information for surface model" )
+
+         !  Set water_depth over land to be 2 m. Set water_depth over lakes to be lake depth..
+         !  This was done to re-create the LAKE_DEPTH field, but with ocean depth.
+
+         ELSE
+            DO j = jts, MIN(jde-1,jte)
+               DO i = its, MIN(ide-1,ite)
+                  grid%water_depth(i,j) = grid%bathymetry(i,j)
+                  IF      ( ( grid%lu_index(i,j) .NE. grid%islake ) .AND. ( grid%lu_index(i,j) .NE. grid%iswater ) ) THEN
+                     grid%water_depth(i,j) = -10
+                  ELSE IF   ( grid%lu_index(i,j) .EQ. grid%islake ) THEN
+                     grid%water_depth(i,j) = grid%bathymetry(i,j) - grid%ht_gc(i,j)
+                  END IF
+                  grid%water_depth(i,j) = grid%water_depth(i,j)*-1.0 
+                  IF (grid%water_depth(i,j) .LT. 0.1) THEN
+                     grid%water_depth(i,j) = 0.1
+                  END IF
+               END DO
+            END DO
+         END IF
+      END IF
+      ! END PSH
 
       !  Send out a quick message about the time steps based on the map scale factors.
 

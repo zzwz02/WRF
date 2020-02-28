@@ -1,0 +1,29 @@
+#########################
+#     Laura Mazzaro     #
+#         LJMB          #
+#########################
+
+# Extension of the cell perturbation method to use momentum perturbations
+
+rconfig logical m_pert_uv         namelist,dynamics       max_domains    .false.  -       "flag to activate horizontal momentum perturbations at inflow boundaries"
+rconfig logical m_pert_w          namelist,dynamics       max_domains    .false.  -       "flag to activate vertical momentum perturbations at inflow boundaries"
+rconfig integer m_pert_locx       namelist,dynamics       max_domains       -1    -       "Momentum perturbation boundary in x: 0: don't perturb, -1: perturb -x, 1:perturb +x"
+rconfig integer m_pert_locy       namelist,dynamics       max_domains       -1    -       "Momentum perturbation boundary in y: 0: don't perturb, 1: perturb -y, 1:perturb +y"
+state   real    mom_pert_u       ikj          dyn_em                         1        X       r      "mom_pert_u" "momentum perturbation field for u-tendency" "kg s^-4"
+state   real    mom_pert_v       ikj          dyn_em                         1        X       r      "mom_pert_v" "momentum perturbation field for v-tendency" "kg s^-4"
+state   real    mom_pert_w       ikj          dyn_em                         1        Y       r      "mom_pert_w" "momentum perturbation field for w-tendency" "kg s^-4"
+rconfig integer cell_width       namelist,dynamics       max_domains     8       -       "number of grid points conforming the cell" 
+rconfig real    mom_pert_amp_uv  namelist,dynamics       max_domains     1000     -       "maximum amplitude for the horizontal momentum perturbations"
+rconfig real    mom_pert_amp_w   namelist,dynamics       max_domains     1500     -       "maximum amplitude for the vertical momentum perturbations"
+rconfig real    mom_pert_gps     namelist,dynamics       max_domains     24     -       "Number of perturbed grid-point rows/columns at boundaries"
+rconfig real    mom_pert_ktop    namelist,dynamics       max_domains     75     -       "top of perturbations [gps]"
+rconfig real    mom_pert_kbot    namelist,dynamics       max_domains     0     -       "bottom of perturbations [gps]"
+
+#########################
+
+halo      HALO_EM_MOM_PERT_U       dyn_em 8:mom_pert_u
+period    PERIOD_EM_MOM_PERT_U     dyn_em 3:mom_pert_u
+halo      HALO_EM_MOM_PERT_V       dyn_em 8:mom_pert_v
+period    PERIOD_EM_MOM_PERT_V     dyn_em 3:mom_pert_v
+halo      HALO_EM_MOM_PERT_W       dyn_em 8:mom_pert_w
+period    PERIOD_EM_MOM_PERT_W     dyn_em 3:mom_pert_w

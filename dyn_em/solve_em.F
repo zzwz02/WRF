@@ -78,6 +78,8 @@ SUBROUTINE solve_em ( grid , config_flags  &
    USE module_llxy, ONLY : proj_cassini
    USE module_avgflx_em, ONLY : zero_avgflx, upd_avgflx
    USE module_cpl, ONLY : coupler_on, cpl_settime, cpl_store_input
+   USE module_tsout !JDM-MMC
+   USE module_cellpert ! DME-MMC
 
    IMPLICIT NONE
 
@@ -117,6 +119,12 @@ SUBROUTINE solve_em ( grid , config_flags  &
    LOGICAL                         :: specified_bdy, channel_bdy
 
    REAL                            :: t_new, time_duration_of_lbcs
+
+   ! DME-MMC
+   TYPE(WRFU_TimeInterval)              :: tmpTimeInterval_ini
+   INTEGER :: cp_pert_nts, nt_curr_secs_ini, kts
+   REAL    :: curr_secs_ini
+   ! DME-MMC
    
    ! Changes in tendency at this timestep
    real ,DIMENSION(grid%sm31:grid%em31,grid%sm32:grid%em32,grid%sm33:grid%em33) :: h_tendency, &
@@ -800,6 +808,9 @@ BENCH_START(rk_tend_tim)
        CALL wrf_debug ( 200 , ' call rk_tendency' )
        CALL rk_tendency ( config_flags, rk_step                                                                &
                          ,grid%ru_tend, grid%rv_tend, rw_tend, ph_tend, t_tend                                 &
+			 ,grid%ru_tend_cor, grid%ru_tend_adv, grid%ru_tend_pgf, grid%ru_tend_curv, grid%ru_tend_hdiff      & !added line for u tendencies (NM)
+                         ,grid%rv_tend_cor, grid%rv_tend_adv, grid%rv_tend_pgf, grid%rv_tend_curv, grid%rv_tend_hdiff      & !added line for v tendencies (NM)
+			 ,grid%t_tend_adv									       &	!added line for t_adv (JSR)
                          ,ru_tendf, rv_tendf, rw_tendf, ph_tendf, t_tendf                                      &
                          ,mu_tend, grid%u_save, grid%v_save, w_save, ph_save                                   &
                          ,grid%t_save, mu_save, grid%rthften                                                   &
@@ -886,6 +897,7 @@ BENCH_START(relax_bdy_dry_tim)
 
        CALL rk_addtend_dry( grid%ru_tend,  grid%rv_tend,  rw_tend,  ph_tend,  t_tend,  &
                             ru_tendf, rv_tendf, rw_tendf, ph_tendf, t_tendf, &
+                                                        grid%ru_tend_phys, grid%rv_tend_phys, &                 ! added line for extracting physics tendencies (NM)
                             grid%u_save, grid%v_save, w_save, ph_save, grid%t_save, &
                             mu_tend, mu_tendf, rk_step,                      &
                             grid%c1h, grid%c2h,                              &
@@ -925,6 +937,161 @@ BENCH_START(relax_bdy_dry_tim)
 
 
        ENDIF
+
+
+      ! ____________________________ START LJMB ______________________________
+
+      !**************************************************************!
+      ! Extension to the Cell Perturbation (CP) method using         !
+      ! momentum perturbations                                       !
+      ! (Laura Jin Mazzaro, University of Colorado Boulder, LANL)    !
+      !                                                              !
+      ! NOTICE                                                       !
+      ! The following paper should be cited whenever presenting      !
+      ! results using this extension to the CP method:               !
+      !                                                              !
+      ! - Mazzaro, L.J. et al. 2019: Random Force Perturbations: A   !
+      ! New Extension of the Cell Perturbation Method for Turbulence !
+      ! Generation in Multiscale Atmospheric Boundary Layer          ! 
+      ! Simulations. Journal of Advances in Modeling Earth Systems,  !
+      ! 11, 2311–2329. https://doi.org/10.1029/2019MS001608          !
+      !**************************************************************!
+
+      ! __________________ HORIZONTAL BDRY PERTURBATIONS
+
+
+         ! IF horizontal perturbations are turned on, and this domain has 
+         ! nested or specified boundary conditions:
+         IF ((config_flags%specified .AND. config_flags%m_pert_uv) .OR. &
+            (config_flags%nested .AND. config_flags%m_pert_uv)) THEN
+
+            ! If this is the first Runge-Kutta substep,
+            ! and,
+            ! it is time for the perturbations to be refreshed:
+            cp_pert_nts = INT(config_flags%pert_tsec/grid%dt)
+            IF ((rk_step .EQ. 1) .AND.                                 &
+               ((grid%itimestep .EQ. 1)  .OR.                          &
+               (MOD(grid%itimestep,cp_pert_nts) .EQ. 0.))) THEN
+
+               PRINT *,"Updating horizontal momentum perturbations..."
+
+               ! Compute perturbation array for u-tendencies:
+               ! (has perturbations all over the domain)
+               CALL mk_cells_u(grid%mom_pert_u,                     &
+                             config_flags%mom_pert_ktop,            &
+                             config_flags%mom_pert_kbot,            &
+                             config_flags%cell_width,               &
+                             config_flags%mom_pert_amp_uv,          &
+                             config_flags,grid,                     &
+                             grid%i_start(ij),grid%i_end(ij),       &
+                             grid%j_start(ij),grid%j_end(ij),       &
+                             k_start,k_end,                         &
+                             ids,ide,jds,jde,kds,kde,               &
+                             ips,ipe,jps,jpe,kps,kpe,               &
+                             ims,ime,jms,jme,kms,kme)
+
+               ! Compute perturbation array for v-tendencies:
+               ! (has perturbations all over the domain)
+               CALL mk_cells_v(grid%mom_pert_v,                     &
+                             config_flags%mom_pert_ktop,            &
+                             config_flags%mom_pert_kbot,            &
+                             config_flags%cell_width,               &
+                             config_flags%mom_pert_amp_uv,          &
+                             config_flags,grid,                     &
+                             grid%i_start(ij),grid%i_end(ij),       &
+                             grid%j_start(ij),grid%j_end(ij),       &
+                             k_start,k_end,                         &
+                             ids,ide,jds,jde,kds,kde,               &
+                             ips,ipe,jps,jpe,kps,kpe,               &
+                             ims,ime,jms,jme,kms,kme)
+
+               ! Call the perturbation subroutine for u-tendencies:
+               CALL mom_pert(grid%ru_tend,                       &
+                             grid%mom_pert_u,config_flags,       &
+                             grid%i_start(ij),grid%i_end(ij),    &
+                             grid%j_start(ij),grid%j_end(ij),    &
+                             k_start,k_end,                      &
+                             ids,ide,jds,jde,kds,kde,            &
+                             ims,ime,jms,jme,kms,kme)
+
+               ! Call the perturbation subroutine for v-tendencies:
+               CALL mom_pert(grid%rv_tend,                       &
+                             grid%mom_pert_v,config_flags,       &
+                             grid%i_start(ij),grid%i_end(ij),    &
+                             grid%j_start(ij),grid%j_end(ij),    &
+                             k_start,k_end,                      &
+                             ids,ide,jds,jde,kds,kde,            &
+                             ims,ime,jms,jme,kms,kme)
+
+            ! If it isn't time for the perturbations to be refreshed, and/or
+            ! it is not the first Runge-Kutta sub-step:
+            ELSE
+
+               ! Simply add the current perturbation array to the tendencies:
+               grid%ru_tend = grid%ru_tend + grid%mom_pert_u
+               grid%rv_tend = grid%rv_tend + grid%mom_pert_v
+
+            ENDIF
+
+         ENDIF
+
+
+
+      ! __________________ VERTICAL BDRY PERTURBATIONS
+
+
+         ! IF vertical perturbations are turned on, and this domain has 
+         ! nested or specified boundary conditions:
+         IF ((config_flags%specified .AND. config_flags%m_pert_w) .OR. &
+            (config_flags%nested .AND. config_flags%m_pert_w)) THEN
+
+            ! If this is the first Runge-Kutta substep,
+            ! and,
+            ! it is time for the perturbations to be refreshed:
+            cp_pert_nts = INT(config_flags%pert_tsec/grid%dt)
+            IF ((rk_step .EQ. 1) .AND.                                 &
+               ((grid%itimestep .EQ. 1)  .OR.                          &
+               (MOD(grid%itimestep,cp_pert_nts) .EQ. 0.))) THEN
+
+               PRINT *,"Updating vertical momentum perturbations..."
+
+               ! Compute perturbation array for w-tendencies:
+               ! (has perturbations all over the domain)
+               CALL mk_cells_w(grid%mom_pert_w,                     &
+                             config_flags%mom_pert_ktop,            &
+                             config_flags%mom_pert_kbot,            &
+                             config_flags%cell_width,               &
+                             config_flags%mom_pert_amp_w,           &
+                             config_flags,grid,                     &
+                             grid%i_start(ij),grid%i_end(ij),       &
+                             grid%j_start(ij),grid%j_end(ij),       &
+                             k_start,k_end,                         &
+                             ids,ide,jds,jde,kds,kde,               &
+                             ips,ipe,jps,jpe,kps,kpe,               &
+                             ims,ime,jms,jme,kms,kme)
+
+               ! Call the perturbation subroutine for w-tendencies:
+               CALL mom_pert(rw_tend,                            &
+                             grid%mom_pert_w,config_flags,       &
+                             grid%i_start(ij),grid%i_end(ij),    &
+                             grid%j_start(ij),grid%j_end(ij),    &
+                             k_start,k_end,                      &
+                             ids,ide,jds,jde,kds,kde,            &
+                             ims,ime,jms,jme,kms,kme)
+
+            ! If it isn't time for the perturbations to be refreshed, and/or
+            ! it is not the first Runge-Kutta sub-step:
+            ELSE
+
+               ! Simply add the current perturbation array to the tendencies:
+               rw_tend = rw_tend + grid%mom_pert_w
+
+            ENDIF
+
+         ENDIF
+
+      ! ____________________________ END LJMB ______________________________
+
 
 !---------------------------------------------------------------------------------------------
 ! KRS 9/12/2012: Inserted new IF block calls to spec_bdy_dry_perturb. If peturb_bdy=1, SKEBS 
@@ -3352,6 +3519,109 @@ BENCH_END(bc_end_tim)
    END DO Runge_Kutta_loop
 !  grid%dmudt=grid%mu_2 - grid%mu_1
 
+! DME-MMC
+!**************************************************************!
+! Cell perturbation method to generate inflow turbulence in    !
+! nested mesoscale to turbulence-resolving LES simulations     !
+! (Domingo Munoz-Esparza, NCAR)                                !
+!                                                              !
+! NOTICE                                                       !
+! The following papers should be cited whenever presenting     !
+! results using this method (using either the original or any  !
+! modified versions of this turbulence genrator):              !
+!                                                              !
+! - Munoz-Esparza, D. et al. 2014: Bridging the Transition     !
+! from Mesoscale to Microscale Turbulence in Numerical Weather !
+! Prediction Models. Boundary-Layer Meteorology, 153:409-440   !
+! doi:10.1007/s10546-014-9956-9                                !
+!                                                              !
+! - Munoz-Esparza, D. et al. 2015: A stochastic perturbation   !
+! method to generate inflow turbulence in large-eddy simulation!
+! models: Application to neutrally stratified atmospheric      !
+! boundary layers. Physics of Fluids, 27:035102                !
+! doi:10.1063/1.4913572                                        !
+!                                                              !
+! - Munoz-Esparza, D. and Kosovic, B. 2018: Generation of      !
+! inflow turbulence in large-eddy simulations of nonneutral    !
+! atmospheric boundary layers with the cell perturbation       !
+! method. Monthly Weather Review, 146:1889-1909                !
+! doi:10.1175/MWR-D-18-0077.1                                  !
+!**************************************************************!
+IF ( config_flags%cell_pert) THEN
+
+  cp_pert_nts = INT(config_flags%pert_tsec/grid%dt)
+
+  IF ( MOD(grid%itimestep, cp_pert_nts) .EQ. 0. ) THEN
+    write(message,*) '--------------------------------'
+       call wrf_message( trim(message) )
+    write(message,*) '--- Cell Perturbation Method ---'
+       call wrf_message( trim(message) )
+    write(message,*) '--------------------------------'
+       call wrf_message( trim(message) )
+
+    tmpTimeInterval_ini = domain_get_current_time ( grid ) - domain_get_start_time ( grid )
+    curr_secs_ini  = real_time(tmpTimeInterval_ini)
+    curr_secs_ini = curr_secs_ini + grid%dt
+    nt_curr_secs_ini = int(curr_secs_ini)/int(real(cp_pert_nts)*grid%dt)
+
+    DO ij = 1, grid%num_tiles
+          its = grid%i_start(ij)
+          ite = grid%i_end(ij)
+          jts = grid%j_start(ij)
+          jte = grid%j_end(ij)
+          kts = k_start
+          kte = k_end
+
+          CALL cp_perturb(grid%Pxy,nt_curr_secs_ini,grid%phb,grid%ph_2,   &
+                          config_flags,grid,mytask,                       &
+                          its,ite,jts,jte,kts,kte,                        &
+                          ids,ide,jds,jde,kds,kde,                        &
+                          ips,ipe,jps,jpe,kps,kpe,                        &
+                          ims,ime,jms,jme,kms,kme)
+     
+           IF ( .NOT. config_flags%cell_pert_2d .AND. (.NOT. config_flags%cell_pert_1d) ) THEN
+
+             CALL cp_apply_4bdy(grid%Pxy,grid%t_2,grid%phb,grid%ph_2,     &
+                      config_flags,grid,                                  &
+                      its,ite,jts,jte,kts,kte,                            &
+                      ids,ide,jds,jde,kds,kde,                            &
+                      ips,ipe,jps,jpe,kps,kpe,                            &
+                      ims,ime,jms,jme,kms,kme)
+
+           ELSE IF ( config_flags%cell_pert_2d .AND. (.NOT. config_flags%cell_pert_1d)  ) THEN
+
+             CALL cp_apply_2bdy(grid%Pxy,grid%t_2,grid%phb,grid%ph_2,     &
+                      config_flags,grid,                                  &
+                      its,ite,jts,jte,kts,kte,                            &
+                      ids,ide,jds,jde,kds,kde,                            &
+                      ips,ipe,jps,jpe,kps,kpe,                            &
+                      ims,ime,jms,jme,kms,kme)
+
+           ELSE IF ( config_flags%cell_pert_1d .AND. (.NOT. config_flags%cell_pert_2d) ) THEN
+
+             CALL cp_apply_1bdy(grid%Pxy,grid%t_2,grid%phb,grid%ph_2,     &
+                      config_flags,grid,                                  &
+                      its,ite,jts,jte,kts,kte,                            &
+                      ids,ide,jds,jde,kds,kde,                            &
+                      ips,ipe,jps,jpe,kps,kpe,                            &
+                      ims,ime,jms,jme,kms,kme)
+
+           ELSE
+
+             write(message,*) 'WRONG COMBINATION OF BDY FLAGS!!! CELL PERTURBATION METHOD NOT BEING APPLIED!!!'
+             call wrf_message( 0, trim(message) )
+
+           ENDIF
+   
+    ENDDO
+
+  ENDIF
+
+ENDIF
+! DME-MMC
+
+
+
 #if ( WRFPLUS != 1 )
    IF      ( config_flags%traj_opt .EQ. UM_TRAJECTORY ) THEN
 #ifdef DM_PARALLEL
@@ -4564,6 +4834,46 @@ BENCH_END(bc_2d_tim)
 
    END DO
    !$OMP END PARALLEL DO
+
+   ! JDM-MMC BEGIN--------------------------------------------------------
+   
+! calculate cell-centered variables for reduced output
+
+   IF ( config_flags%tsout_opt .EQ. 1 ) THEN
+
+    CALL wrf_debug ( 10 , ' call cell_centered_calc' )
+
+    !$OMP PARALLEL DO   &
+    !$OMP PRIVATE ( ij )
+    DO ij = 1 , grid%num_tiles
+       CALL cell_centered_calc(grid%uts, grid%vts, grid%wts,          &
+                               grid%tts, grid%pts, grid%tkets,        &
+                               grid%zts, grid%t11ts, grid%t22ts,      &
+                               grid%t33ts, grid%t12ts, grid%t13ts,    &
+                               grid%t23ts, grid%h3ts, grid%usts,      &
+                               grid%z0ts, grid%u_2, grid%v_2,         &
+                               grid%w_2, grid%t_2, grid%p,            &
+                               grid%pb, grid%tke_2,                   &
+                               grid%ph_2, grid%phb,                   &
+                               nba_mij(ims,kms,jms,P_m11),            &
+                               nba_mij(ims,kms,jms,P_m22),            &
+                               nba_mij(ims,kms,jms,P_m33),            &
+                               nba_mij(ims,kms,jms,P_m12),            &
+                               nba_mij(ims,kms,jms,P_m13),            &
+                               nba_mij(ims,kms,jms,P_m23),            &
+                               nba_mij(ims,kms,jms,P_mh3),            &
+                               grid%ustm, grid%znt,                   &
+                               ids, ide, jds, jde, kds, kde,          &
+                               ims, ime, jms, jme, kms, kme,          &
+                               grid%i_start(ij), grid%i_end(ij),      &
+                               grid%j_start(ij), grid%j_end(ij),      &
+                               k_start, k_end                          )
+     
+    END DO
+    !$OMP END PARALLEL DO
+
+    ENDIF
+!-----------------------------JDM-MMC END
 
 !-----------------------------------------------------------
 !  After all of the RK steps, after the microphysics, after p-rho-phi,
